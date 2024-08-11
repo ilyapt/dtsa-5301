@@ -1,0 +1,435 @@
+---
+title: "NYPD Shooting Incident Data"
+always_allow_html: true
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  geometry: letterpaper
+  pdf_document: default
+---
+
+# Data loading and understanding
+
+```{r loadData, message=FALSE}
+library(tidyverse)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(leaflet)
+library(ggridges)
+
+data <- read_csv('https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD')
+summary(data)
+```
+\vspace{10mm}
+
+```{r colMissedValues, message=FALSE}
+colSums(is.na(data))
+```
+\vspace{10mm}
+
+```{r JURISDICTION_CODE_Values, message=FALSE}
+
+#lets check values in JURISDICTION_CODE and determine the frequency of each
+
+table(data$JURISDICTION_CODE)
+```
+
+\vspace{10mm}
+
+```{r PERP_SEX_Values, message=FALSE}
+
+# and same in PERP_SEX column
+
+table(data$PERP_SEX)
+```
+
+\vspace{10mm}
+
+From the preliminary analysis, I realized that I would not be able to use the shooting location descriptions in my analysis because the dataset contains a huge number of missing values. This could be explained by the fact that the incidents with missing values simply happened on the street, but this is only an assumption. Therefore, to avoid unnecessary inaccuracies, I will not use the location descriptions in my analysis.
+
+I also found that both the race and age characteristics of the perpetrators have missing values. A demographic analysis with so many missing values would be skewed, but I can use the fact that the perpetrator description is in the data as a binary attribute in my analysis.
+
+# Research Focus
+
+Because very little information is available on demographics, this work will involve the analysis of seasonal and geographic trends. It will center on detecting how often such shooting incidents occur and their specifics. It will also analyze the variations in dynamics of such incidents across different geolocations.
+
+\vspace{25mm}
+
+# Data preprocessing and cleaning
+
+\vspace{10mm}
+
+The dataset was cleaned by dropping those records that had jurisdiction codes missing, assuming them to be for specific cases. (For example, those cases related to federal agencies.) I then chose the appropriate columns, converted dates and extracting year, month, day of the week, and hour. Moreover, I converted some columns into proper data types like logical and handled unknown values in columns for the race of perpetrator, as well as sex. Finally, several columns were renamed for clarity, and a logical column was added to show whether an perpetrator description is available or not.
+
+\vspace{10mm}
+
+```{r preprocessData, message=FALSE}
+data_clean <- data %>%
+  filter(!is.na(JURISDICTION_CODE)) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE),
+         Year = year(OCCUR_DATE),
+         Month = month(OCCUR_DATE, label=TRUE),
+         DayOfWeek = wday(OCCUR_DATE,
+                          week_start = getOption("lubridate.week.start", 7),
+                          label = TRUE),
+         Hour = hour(OCCUR_TIME),
+         STATISTICAL_MURDER_FLAG = as.logical(STATISTICAL_MURDER_FLAG),
+         JURISDICTION_CODE = factor(JURISDICTION_CODE, levels = 0:2,
+                                    labels = c("Patrol", "Transit", "Housing")),
+         PERP_RACE = ifelse(PERP_RACE %in% c("(null)", "UNKNOWN"), NA, PERP_RACE),
+         PERP_SEX = ifelse(PERP_SEX %in% c("(null)", "U"), NA, PERP_SEX),
+         HasPerpDescription = ifelse(is.na(PERP_RACE) | is.na(PERP_SEX), FALSE, TRUE)
+         ) %>%
+  select(c('OCCUR_DATE', 'OCCUR_TIME', 'BORO', 'STATISTICAL_MURDER_FLAG',
+           'PRECINCT', 'JURISDICTION_CODE', 'Latitude', 'Longitude', 'Year',
+           'Month', 'DayOfWeek', 'Hour', 'HasPerpDescription')) %>%
+  rename(Date = OCCUR_DATE, Time = OCCUR_TIME, Borough = BORO,
+         Precinct = PRECINCT, MurderFlag = STATISTICAL_MURDER_FLAG,
+         JurisdictionCode = JURISDICTION_CODE)
+summary(data_clean)
+```
+
+\vspace{15mm}
+
+Then I shall go ahead with a basic temporal and spatial analysis of the data, considering how the numbers vary over the years and by time of the day and how these incidents are distributed across New York City boroughs. Also, I intend to look at what has happened to the number of murders relative to the incidents and compute an estimate for the proportion of perpetrators for whom some basic descriptive information is available.
+
+\vspace{25mm}
+
+# Yearly Trends Analysis
+
+\vspace{10mm}
+
+```{r incedentsByYear, message=FALSE}
+data_clean %>%
+  group_by(Year) %>%
+  summarize(Incidents = n(), Murdered = sum(MurderFlag), .groups = "drop")%>%
+  ggplot(aes(x = Year)) +
+  geom_line(aes(y = Incidents, color = "Shooting")) +
+  geom_line(aes(y = Murdered, color = "Murder")) +
+  geom_point(aes(y = Incidents, color = "Shooting")) +
+  geom_point(aes(y = Murdered, color = "Murder")) +
+  scale_color_manual(values = c("Shooting" = "black", "Murder" = "red")) +
+  labs(title = "Incidents by Year",
+       x = "Year",
+       y = "Number of Incidents",
+       color = "Legend") +
+  theme_minimal()
+```
+\vspace{10mm}
+
+```{r rateByYear, message=FALSE}
+data_clean %>% group_by(Year) %>%
+  summarize(Murdered = mean(MurderFlag, na.rm = TRUE),
+            Descripted = mean(HasPerpDescription, na.rm = TRUE)) %>%
+  ggplot(aes(x = Year)) +
+  geom_line(aes(y = Descripted, color = "Descripted")) +
+  geom_line(aes(y = Murdered, color = "Murder")) +
+  geom_point(aes(y = Descripted, color = "Descripted")) +
+  geom_point(aes(y = Murdered, color = "Murder")) +
+  scale_color_manual(values = c("Descripted" = "gray", "Murder" = "red")) +
+  scale_y_continuous(labels = scales::percent) +
+  labs(title = "Murder Rates and Perpetrator Descriptions by Year",
+       x = "Year",
+       y = "Rate",
+       color = "Legend") +
+  theme_minimal()
+```
+\vspace{10mm}
+
+```{r incedentsByBoroughByYear, message=FALSE}
+data_clean %>%
+  group_by(Borough, Year) %>% 
+  summarize(Incidents = n(), .groups = "drop") %>%
+  ggplot(aes(x = Year, y = Incidents, color=Borough)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Incidents by Borough by Year",
+       x = "Year",
+       y = "Number of Incidents") +
+  theme_minimal()
+```
+
+\vspace{10mm}
+
+**Analysis** A temporal analysis of gun-crimes committed in various New York City areas revealed certain patterns. For instance, the pattern of such crimes committed prior to 2016 was negative, but a significant increase was found thereafter. At the same time, a positive correlation was found between the number of homicides and the number of crimes with weapons. A similar pattern was observed in the same analysis in the context of different city districts for several years. However, another interesting correlation was found - with the steady increase in the number of such crimes, the descriptive nature of criminals’ identity was highly variable, which may suggest a deficiency in data collection methods and record keeping directly by New York City law enforcement agencies.
+
+**Bias** There is a strategy in bias when comparing data by Borough and the absolute numbers presented on each graph do not account for how many people live in the 5 boroughs. Naturally, the Bronx and Brooklyn high numbers come in part by virtue that these are two heavily populated areas. If you do not take this information into account, your conclusions will be biased because places that are more densely populated always face higher incidents in absolute numbers.
+
+\vspace{25mm}
+
+# Hourly Trends Analysis
+
+\vspace{10mm}
+
+```{r incedentsByBoroughHourly, message=FALSE}
+hourly_data <- data_clean %>%
+  mutate(
+    Time_Rounded = round_date(as.POSIXct(Time, origin = "1970-01-01", tz = "UTC"),
+                              unit = "10 minutes"),
+    Time_Decimal = hour(Time_Rounded) + minute(Time_Rounded) / 60)
+
+hourly_data %>%
+  group_by(Time_Decimal, Borough) %>% 
+  summarize(Incidents = n(), .groups = "drop") %>%
+ggplot(aes(x = Time_Decimal, y = Incidents, color=Borough)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(0, 23, by = 1), labels = sprintf("%02d:00", 0:23)) +
+  labs(title = "Incidents by Borough Hourly",
+       x = "Hour",
+       y = "Number of Incidents") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+\vspace{10mm}
+
+```{r incedentsByDayOfWeekHourly, message=FALSE}
+hourly_data %>%
+  group_by(Time_Decimal, DayOfWeek) %>% 
+  summarize(Incidents = n(), .groups = "drop") %>%
+ggplot(aes(x = Time_Decimal, y = Incidents, color=DayOfWeek)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(0, 23, by = 1), labels = sprintf("%02d:00", 0:23)) +
+  labs(title = "Incidents by DayOfWeek Hourly",
+       x = "Hour",
+       y = "Number of Incidents") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+\vspace{10mm}
+
+```{r mhHeatmap, message=FALSE}
+data_clean %>%
+  group_by(Month, Hour) %>%
+  summarize(Incidents = n()
+              , .groups = "drop") %>%
+  ggplot(aes(x = Month, y = Hour, fill = Incidents)) +
+    geom_tile() +
+    scale_fill_gradient(low = "white", high = "red") +
+    scale_y_continuous(breaks = seq(0, 24, by = 4), labels = sprintf("%02d:00", seq(0, 24, by = 4))) +
+    labs(title = "Month / Hour incidents heatmap",
+         x = "Month",
+         y = "Hour",
+         fill = "Number of Incidents") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+\vspace{10mm}
+
+```{r mdwHeatmap, message=FALSE}
+data_clean %>%
+  group_by(Month, DayOfWeek) %>%
+  summarize(Incidents = n()
+              , .groups = "drop") %>%
+  ggplot(aes(x = Month, y = DayOfWeek, fill = Incidents)) +
+    geom_tile() +
+    scale_fill_gradient(low = "white", high = "red") +
+    labs(title = "Month / Day of Week incidents heatmap",
+         x = "Month",
+         y = "Day of Week",
+         fill = "Number of Incidents") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+```{r incedentsByJurisdictionHourly, message=FALSE}
+hourly_data %>%
+  group_by(Time_Decimal, JurisdictionCode) %>% 
+  summarize(Incidents = n(), .groups = "drop") %>%
+ggplot(aes(x = Time_Decimal, y = Incidents, color=JurisdictionCode)) +
+  geom_point() +
+  scale_x_continuous(breaks = seq(0, 23, by = 1), labels = sprintf("%02d:00", 0:23)) +
+  labs(title = "Incidents by Jurisdiction Hourly",
+       x = "Hour",
+       y = "Number of Incidents") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+
+\vspace{10mm}
+
+```{r perpDescriptionRateHourly, message=FALSE}
+data_clean %>% group_by(Hour) %>%
+  summarize(descripted = mean(HasPerpDescription, na.rm = TRUE)) %>%
+  ggplot(aes(x = Hour, y = descripted)) +
+  geom_line() +
+  geom_point() +
+  labs(title = "Perpetrator Descriptions Rate Hourly",
+       x = "Hour",
+       y = "Rate") +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_continuous(breaks = seq(0, 23, by = 1), labels = sprintf("%02d:00", 0:23)) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
+```
+\vspace{10mm}
+
+**Analysis** A similar analysis of weapon crime patterns in New York City by specific time period also revealed additional correlations. On weekdays, the absolute maximum occurs during the following time periods: from midnight to 5 AM and from 6 PM to midnight. The highest number of crimes committed during these periods is in Brooklyn and Bronx. At the same time, the maximum number of crimes occurs on Friday, Saturday and Sunday at night. Extra attention should be paid to an additional variable - seasonality. For instance, during the summer months, similar patterns persist, but the number of crimes committed in kind is much higher.
+
+A significant gap identified earlier was the lack of a criminal identity description as well as age and gender in some cases. Analysis has shown that in most cases this absence is due to the time of the crime. For instance, if it was committed during daytime hours, such description is highly accurate, possibly indicating that identification is easier during daytime hours. 
+
+\vspace{25mm}
+
+# Geographical and Distributional Analysis
+
+\vspace{10mm}
+
+```{r incidentsAndMurderRateByBorough, message=FALSE}
+
+ data_clean %>% group_by(Borough) %>%
+  summarize(share_of_incidents = n(),murder_rate = mean(MurderFlag, na.rm = TRUE)) %>%
+  mutate(share_of_incidents = (share_of_incidents / sum(share_of_incidents))) %>%
+  
+  arrange(desc(share_of_incidents)) %>%
+  mutate(pos = cumsum(share_of_incidents) - share_of_incidents / 2) %>%
+  
+  ggplot(aes(x = 2, y = share_of_incidents, fill = murder_rate)) +
+  geom_bar(stat = "identity", width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  scale_fill_gradient(low = "blue", high = "red",labels = scales::percent) +
+  labs(title = "Incidents and Murder Rates by Borough",
+       x = NULL, y = NULL, fill = "Murder Rate") +
+  theme_void() +
+  theme(legend.position = "right") + 
+  geom_text(aes(y = pos, label = Borough), color = "black", size = 3.5)
+
+```
+
+```{r probabilitiesByPrecinct, message=FALSE}
+data_clean %>% group_by(Precinct) %>%
+  summarize(
+    HasDescribed = mean(HasPerpDescription), 
+            Murder = mean(MurderFlag),
+            .groups = "drop") %>%
+  pivot_longer(cols = c("HasDescribed","Murder"),
+               names_to = "Variable", values_to = "Value") %>%
+
+ggplot( aes(x = Value, y = Variable, fill = Variable)) +
+  geom_density_ridges(bandwidth = 0.02) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+  labs(title = "Distribution of Murder and Perp. Description Probabilities by Precinct",
+       x = "Probability Percentage",
+       y = ""
+       ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+\vspace{10mm}
+
+**Analysis** Firearms crimes' analysis by various New York City areas concluded that most of them occur in the two most populous ones (Brooklyn and the Bronx). However, the number of such crimes within Manhattan and Staten Island is significantly lower. When these crimes are considered in the context of their severity, the majority of homicides were committed within Staten Island. It follows that the direct number of these crimes may be significantly lower in some areas, but their severity (e.g., homicides number) would be higher relative to other ones.
+There was also the additional conclusion that in 20-25% of cases, the use of a firearm directly resulted in a homicide, but only in 40-60% of those was the criminal' identity and description identified. However, the latter variable can vary significantly from area to area, which may reflect the varying approaches of law enforcement agencies to investigating crimes and working with witnesses.
+
+\vspace{25mm}
+
+# Geographical Distribution of Shooting Incidents
+
+\vspace{10mm}
+
+```{r incidentsOnMap, message=FALSE}
+
+data_geo <- data_clean %>% filter(!is.na(Longitude) & !is.na(Latitude))
+
+
+map <- leaflet(width = "503px", height = "700px") %>%
+  addTiles() %>%
+  setView(lat = 40.75, lng = -73.93, zoom = 11)
+
+map %>%
+  addCircleMarkers(data = data_geo %>% filter(!MurderFlag),
+            lng = ~Longitude, lat = ~Latitude, 
+            radius = 2,
+            fillColor = "black",
+            stroke = FALSE) %>%
+  addCircleMarkers(data = data_geo %>% filter(MurderFlag),
+            lng = ~Longitude, lat = ~Latitude, 
+            radius = 2,
+            fillColor = "red",
+            stroke = FALSE) %>%
+  addLegend(position = "bottomright", 
+            title = "Locations of Incidents",
+            colors = c("red", "black"), 
+            labels = c("Incidents resulting in murder", "Incidents without murder"),
+            opacity = 1,
+            labFormat = labelFormat(prefix = ""),
+            values = c(0, 100))
+```
+
+
+```{r incidentsByJurisdictionOnMap, message=FALSE}
+
+map <- leaflet(width = "503px", height = "700px") %>%
+  addTiles() %>%
+  setView(lat = 40.75, lng = -73.93, zoom = 11) #%>%
+
+map %>%
+  addCircleMarkers(data = data_geo %>% filter(JurisdictionCode=="Patrol"),
+            lng = ~Longitude, lat = ~Latitude, 
+            radius = 2,
+            fillColor = "black",
+            stroke = FALSE) %>%
+  addCircleMarkers(data = data_geo %>% filter(JurisdictionCode=="Housing"),
+            lng = ~Longitude, lat = ~Latitude, 
+            radius = 2,
+            fillColor = "red",
+            stroke = FALSE) %>%
+  addCircleMarkers(data = data_geo %>% filter(JurisdictionCode=="Transit"), 
+            lng = ~Longitude, lat = ~Latitude, 
+            radius = 2,
+            fillColor = "blue",
+            stroke = FALSE) %>%
+  addLegend(position = "bottomright", 
+            title = "Locations of Incidents by Jurisdiction",
+            colors = c("black", "red", "blue"), 
+            labels = c("Patrol", "Housing", "Transit"),
+            opacity = 1,
+            labFormat = labelFormat(prefix = ""),
+            values = c(0, 100))
+```
+
+**Analysis** Spatial analysis reveals meaningful patterns in the geographical location of shooting incidents. These high-density clusters of both fatal and non-fatal incidents are concentrated mostly in the Bronx, northern Manhattan and central Brooklyn. The proportionality between the count of fatal incidents means the level of fatalities is proportional to high local activity areas.
+
+As seen on the jurisdictional map, most incidents are handled by patrol jurisdiction when housing jurisdiction is forming well defined clusters. Why these clusters form is harder to say, whether it be due to incidents there happening more often in buildings or because other sectors are under patrol jurisdiction. Transit-related incidents are much less frequent.
+
+\vspace{25mm}
+
+# Polynomial Regression Model
+
+\vspace{10mm}
+
+**Model description** Obviously, the correlation between time of day and number of incidents does not seem
+to be linear, so I used a polynomial function for the model. Overall, the resulting model does a good job of
+simulating the average number of incidents, given the wide variation across boroughs.
+
+```{r regressionModel, message=FALSE}
+hourly_data <- hourly_data %>%
+  group_by(Time_Decimal, Borough) %>% 
+  summarize(Incidents = n(), .groups = "drop")
+  
+ggplot(hourly_data, aes(x = Time_Decimal, y = Incidents)) +
+  geom_point() +
+  geom_smooth(method = "lm", formula = y ~ poly(x, 2), se = FALSE, color = "red") +
+  scale_x_continuous(breaks = seq(0, 23, by = 1), labels = sprintf("%02d:00", 0:23)) +
+  labs(title = "Incidents by Borough Hourly (Polynomial Regression Model)",
+       x = "Hour",
+       y = "Number of Incidents") +
+  theme_minimal() + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))  
+```
+
+```{r modelSummary, message=FALSE}
+summary(lm(Incidents ~ poly(Time_Decimal, 2), data = hourly_data))
+```
+
+\vspace{25mm}
+
+# Potential Bias in Data
+
+\vspace{10mm}
+As mentioned previously I did not normalize the number of incidents for each neighborhood; instead it's for absolute numbers, which might affect my conclusions. Moreover, there are a good amount of incidents where perpetrators is not designated and this can lead to false conclusions as far as which populations these types of incidences break down amongst.
+
+In addition, these data are collected using certain procedures or from certain sources, this may lead to systematic errors. Some victims, like in gang-related shootings where the law of silence is strictly obeyed, may not go to an official for medical treatment or may refuse to file a report with police.
+
+Some factors of crime such as socioeconomic are not cover by the data. For instance, certain neighborhoods with high crime rates could relate to poor education or sought after a higher unemployment rate.
