@@ -38,9 +38,8 @@ library(dplyr)
 library(lubridate)
 library(ggplot2)
 
-url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
-cases <- read_csv(str_c(url_in, "time_series_covid19_confirmed_global.csv"))
-deaths <- read_csv(str_c(url_in, "time_series_covid19_deaths_global.csv"))
+cases <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv")
+deaths <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv")
 ```
 
 \vspace{25mm}
@@ -281,3 +280,12 @@ Seasonal trends might also add bias to the data. The data does reveal seasonal p
 
 Also, using solely cumulative data could ignore key temporal regimes. In this case, no information will be received as to the appearance of new options and how population behavior has evolved over time. If our analysis was carried out based on monthly or annual means, we would overlook short-term spikes/declines related to outbreaks/interventions. As a result, it creates an incomplete portrait of the course and control measures.
 
+\vspace{25mm}
+
+# Conclusion
+
+\vspace{10mm}
+
+Unfortunately, the predictions of pessimists and critics came true. Sweden, which chose the path of minimal restrictions, showed a very high level of deaths from Covid-19. While its neighboring countries, which applied stricter measures to restrict and prevent infection, showed a significantly lower level of deaths during the pandemic.
+
+Although the main peak of infections occurred in 2022, when Omicron was raging, the peak of deaths occurred in 2020, the very beginning of the pandemic. By 2022, the death rate had significantly decreased in all countries considered in the analysis, which most likely indicates both a decrease in the infectiousness of the virus and the emergence of immunity in the population, as well as the emergence of experience among medical personnel in treating this virus.
